@@ -1,122 +1,227 @@
-# Langflow_CICD
-Create a CICD pipeline for Langflow
+# Langflow CI/CD
 
-![Langflow CICD Architecture](https://github.com/Harshneeraj/Langflow_CICD/blob/main/AI_Kitchen_Umbrella.drawio.png)
+Automated deployment of [Langflow](https://github.com/langflow-ai/langflow) flows on Kubernetes using Jenkins and Helm.
 
-📘 Architecture Documentation
-Overview
+![Architecture](AI_Kitchen_Umbrella.drawio.png)
 
-This architecture automates the deployment and management of Langflow flows and a LiteLLM Proxy Server in Kubernetes using Helm charts and Jenkins CI/CD pipelines. It ensures isolated environments for development and production, and integrates with Amazon RDS for persistent data storage.
+## What this does
 
-Components
-1. Source Control (GitHub)
+Every time you push a flow JSON file to the `flows/` directory, Jenkins detects the change and deploys that flow as its own isolated Kubernetes workload — no manual `helm install` needed.
 
-Developers commit code and flow definitions to GitHub.
+The full stack includes:
 
-GitHub integrates with Jenkins to trigger builds automatically after each commit (via webhooks).
+| Component | Purpose |
+|-----------|---------|
+| **Langflow** | Visual AI flow builder and runtime |
+| **LiteLLM** | Unified LLM proxy (OpenAI, Groq, Anthropic, etc.) |
+| **PostgreSQL** | Persistent storage for Langflow and LiteLLM |
+| **Jenkins** | CI/CD orchestrator, triggered by GitHub webhooks |
 
-2. Jenkins
+## Repository layout
 
-Acts as the CI/CD orchestrator.
+```
+Langflow_CICD/
+├── flows/                      # Langflow flow JSON files (one per flow)
+│   └── rag3.json               # Example: RAG flow using AstraDB
+│
+├── helm/
+│   ├── kitchen-umbrella/       # Full-stack chart (Langflow + LiteLLM + Postgres)
+│   └── langflow-runtime/       # Per-flow runtime chart (deployed once per flow)
+│
+├── jenkins/
+│   └── Dockerfile              # Jenkins image with Docker, kubectl, and Helm pre-installed
+│
+├── launcher/
+│   ├── Pod_Launcher.py         # FastAPI service that dynamically creates Langflow deployments
+│   ├── Dockerfile              # Container image for the launcher service
+│   └── engine-rbac.yaml        # Kubernetes RBAC for the launcher's service account
+│
+├── components/
+│   └── ChatLiteLLM.py          # Custom Langflow component for LiteLLM integration
+│
+├── Jenkinsfile                 # Pipeline definition
+└── AI_Kitchen_Umbrella.drawio  # Architecture diagram source
+```
 
-Integrated with ngrok for secure external webhook triggering.
+## How it works
 
-On code commit:
+### 1. Developer pushes a flow
 
-Jenkins triggers the Langflow-Runtime Helm chart build and deployment.
+```
+git add flows/my-new-flow.json
+git commit -m "add my-new-flow"
+git push
+```
 
-Builds are parameterized to handle both dev and prod namespaces.
+### 2. Jenkins detects the change
 
-3. Helm
+The Jenkinsfile compares the current commit to the previous one, finds any new or modified `.json` files under `flows/`, and deploys each one.
 
-Helm is used for packaging and deploying Kubernetes applications.
+### 3. Helm deploys the flow
 
-Two types of Helm charts are used:
+Each flow gets its own Helm release using the `langflow-runtime` chart:
 
-Kitchen-Umbrella Chart: A parent chart responsible for deploying multiple sub-components in one release.
+```
+helm upgrade --install langflow-my-new-flow ./helm/langflow-runtime \
+  --set flow.flow-id=my-new-flow \
+  --set downloadFlows.flows[0].url=https://raw.githubusercontent.com/.../flows/my-new-flow.json
+```
 
-Langflow-Runtime Chart: Defines the runtime environment for Langflow flows. Each flow is released as a separate Helm release.
+The runtime pod downloads the flow JSON at startup and runs Langflow in backend-only mode.
 
-4. Namespaces
+### 4. Environments
 
-Namespaces isolate environments within the Kubernetes cluster:
+| Namespace | What runs there |
+|-----------|----------------|
+| `dev` | Langflow dev instance (full UI + backend) |
+| `prod` | One Helm release per production flow |
+| `litellm` | LiteLLM proxy server |
 
-a. Dev Namespace
+## Quick start
 
-Runs Langflow Dev.
+### Prerequisites
 
-Intended for development and testing of flows.
+- Kubernetes cluster (local: kind, k3s, or minikube)
+- Helm 3
+- Jenkins with the GitHub plugin and ngrok (for webhook delivery)
 
-Uses a dedicated database (Langflow Dev DB) in Amazon RDS.
+### 1. Deploy the full stack
 
-b. Prod Namespace
+```bash
+helm upgrade --install kitchen ./helm/kitchen-umbrella \
+  --set postgresql.auth.password=yourpassword
+```
 
-Runs multiple production-ready flows:
+This deploys Langflow, LiteLLM, and Postgres in one release.
 
-Langflow Prod Flow-1
+### 2. Set up Jenkins
 
-Langflow Prod Flow-2
+Build and run the Jenkins image:
 
-Each flow is deployed independently via separate Helm releases.
+```bash
+docker build -t jenkins-langflow ./jenkins
+docker run -d \
+  --name jenkins-langflow \
+  --network=host \
+  -e KUBECONFIG=/home/jenkins/.kube/config \
+  -v ~/.kube:/home/jenkins/.kube \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v jenkins_home:/var/jenkins_home \
+  jenkins-langflow
+```
 
-Provides isolation and scalability for production workloads.
+Configure a GitHub webhook pointing at your Jenkins instance (use ngrok if running locally).
 
-c. LiteLLM Namespace
+### 3. Deploy a flow manually
 
-Hosts the LiteLLM Proxy Server, which provides LLM inference services for Langflow.
+```bash
+helm upgrade --install langflow-rag3 ./helm/langflow-runtime \
+  --set flow.flow-id=rag3 \
+  --set "flow.downloadFlows.flows[0].url=https://raw.githubusercontent.com/Harshneeraj/Langflow_CICD/main/flows/rag3.json"
+```
 
-Connects to LiteLLM DB in Amazon RDS for persistent state management.
+### 4. (Optional) Run the Pod Launcher
 
-5. Databases (Amazon RDS)
+The launcher is a FastAPI service that lets you spin up new Langflow deployments via HTTP:
 
-Langflow Dev DB → Stores data related to the development instance of Langflow.
+```bash
+# Deploy the launcher
+kubectl apply -f launcher/engine-rbac.yaml
+kubectl run launcher --image=your-registry/launcher:latest --port=8000
 
-LiteLLM DB → Stores data for the LiteLLM Proxy Server.
+# Create a new Langflow deployment
+curl -X POST http://localhost:8000/launch-langflow/
+```
 
-Amazon RDS ensures persistence, reliability, and backup support for both databases.
+## Helm chart reference
 
-Deployment Flow
+### kitchen-umbrella
 
-Code Commit
+Deploys the full stack in one release. Key values:
 
-A developer pushes changes to GitHub.
+```yaml
+postgresql:
+  auth:
+    username: shareduser
+    password: sharedpass
+    database: shareddb,langflow
 
-Build Trigger
+langflow:
+  image:
+    repository: langflowai/langflow
+    tag: latest
+  backend:
+    externalDatabase:
+      host: kitchen-umbrella-postgres
+      port: "5432"
+      user: shareduser
+      password: sharedpass
+      database: langflow
 
-Jenkins, integrated with ngrok, receives the webhook and triggers a build.
+litellm:
+  db:
+    host: kitchen-umbrella-postgres
+    database: shareddb
+```
 
-Helm Deployment
+### langflow-runtime
 
-Jenkins applies the Langflow-Runtime Chart.
+Deploys a single flow. Key values:
 
-Each flow gets its own Helm release (isolation per flow).
+```yaml
+flow:
+  flow-id: your-flow-id
+  image:
+    repository: langflowai/langflow
+    tag: latest
+  downloadFlows:
+    path: /app/flows
+    flows:
+      - url: https://raw.githubusercontent.com/.../flows/your-flow.json
+  backend:
+    externalDatabase:
+      host: kitchen-umbrella-postgres
+      database: langflow_prd
+```
 
-Environment Segregation
+## Included flows
 
-Dev flows are deployed into the Dev Namespace.
+| File | Description |
+|------|-------------|
+| `flows/rag3.json` | RAG pipeline: File → Split → AstraDB (ingest) + AstraDB (search) → OpenAI → Chat |
 
-Production flows are deployed into the Prod Namespace.
+## Custom components
 
-LiteLLM Integration
+### `components/ChatLiteLLM.py`
 
-LiteLLM Proxy Server is deployed into its dedicated namespace.
+A Langflow component that connects to a LiteLLM proxy instead of calling LLM providers directly. Drop it into your Langflow components directory to use it in flows.
 
-It integrates with Langflow (both Dev and Prod) to handle LLM requests.
+Configuration:
+- **API Base URL** — your LiteLLM proxy address (e.g. `http://litellm-service:4000`)
+- **API Key** — the LiteLLM master key
+- **Model** — dynamically fetched from the proxy's `/models` endpoint
 
-Data Persistence
+## Architecture
 
-Langflow and LiteLLM communicate with Amazon RDS for storage.
+```
+GitHub (push)
+    │
+    │ webhook
+    ▼
+Jenkins
+    │
+    │ helm upgrade --install
+    ▼
+Kubernetes cluster
+    ├── dev namespace
+    │   └── Langflow (dev)  ──── Langflow Dev DB (RDS)
+    │
+    ├── prod namespace
+    │   ├── langflow-flow-1  ──┐
+    │   └── langflow-flow-2  ──┴── Langflow Prod DB (RDS)
+    │
+    └── litellm namespace
+        └── LiteLLM proxy  ──── LiteLLM DB (RDS)
+```
 
-Separate databases ensure isolation of dev and prod data.
-
-Key Features
-
-Environment Isolation: Dev and Prod workloads are separated at the namespace and DB level.
-
-Helm-based Deployment: Easy to upgrade, rollback, and maintain multiple flows.
-
-Scalability: Multiple Langflow flows can run in production, each as an independent release.
-
-CI/CD Integration: Automated deployments triggered by GitHub commits via Jenkins.
-
-Persistence & Reliability: Amazon RDS provides durable storage for Langflow and LiteLLM.
+Each production flow is an independent Helm release. Adding a new flow = pushing a JSON file.

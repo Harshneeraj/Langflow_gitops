@@ -1,0 +1,20 @@
+# Python virtual environments
+launcher_env/
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Scratch files
+ROUGH.txt
+list.json
