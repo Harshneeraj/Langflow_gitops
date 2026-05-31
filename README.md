@@ -1,4 +1,4 @@
-# Langflow CI/CD
+# langflow_gitops
 
 Automated deployment of [Langflow](https://github.com/langflow-ai/langflow) flows on Kubernetes using Jenkins and Helm.
 
@@ -20,7 +20,7 @@ The full stack includes:
 ## Repository layout
 
 ```
-Langflow_CICD/
+langflow_gitops/
 ├── flows/                      # Langflow flow JSON files (one per flow)
 │   └── rag3.json               # Example: RAG flow using AstraDB
 │
@@ -117,7 +117,7 @@ Configure a GitHub webhook pointing at your Jenkins instance (use ngrok if runni
 ```bash
 helm upgrade --install langflow-rag3 ./helm/langflow-runtime \
   --set flow.flow-id=rag3 \
-  --set "flow.downloadFlows.flows[0].url=https://raw.githubusercontent.com/Harshneeraj/Langflow_CICD/main/flows/rag3.json"
+  --set "flow.downloadFlows.flows[0].url=https://raw.githubusercontent.com/Harshneeraj/langflow_gitops/main/flows/rag3.json"
 ```
 
 ### 4. (Optional) Run the Pod Launcher

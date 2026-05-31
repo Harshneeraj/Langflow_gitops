@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         FLOWS_DIR = 'flows'
-        REPO_URL  = 'https://raw.githubusercontent.com/Harshneeraj/Langflow_CICD/main'
+        REPO_URL  = 'https://raw.githubusercontent.com/Harshneeraj/langflow_gitops/main'
         HELM_PATH = './helm/langflow-runtime'
     }
 
